@@ -26,6 +26,10 @@ struct Cli {
     /// Base backoff in milliseconds (exponential: base * 2^(attempt-1))
     #[arg(long, default_value_t = 500)]
     backoff_ms: u64,
+
+    /// Overwrite existing files instead of adding (1), (2), ...
+    #[arg(long, default_value_t = false)]
+    overwrite: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -47,6 +51,7 @@ async fn main() -> Result<()> {
     let retries = cli.retries;
     let backoff_ms = cli.backoff_ms;
     let out_dir = cli.out.clone();
+    let overwrite = cli.overwrite;
 
     // Bounded parallelism
     let sem = std::sync::Arc::new(Semaphore::new(cli.concurrency));
@@ -59,6 +64,7 @@ async fn main() -> Result<()> {
         let raw = raw.clone();
         let r = retries;
         let b = backoff_ms;
+        let ow = overwrite;
 
         let h = tokio::spawn(async move {
             let _p = permit; // keep a slot until task finishes
@@ -72,7 +78,7 @@ async fn main() -> Result<()> {
             };
 
             let fname = file_name_from_url(&url);
-            let path = std::path::Path::new(&out).join(fname);
+            let path = pick_output_path(std::path::Path::new(&out), &fname, ow);
 
             if let Err(e) = download_with_retries(&client, &url, &path, r, b).await {
                 eprintln!("FAILED {}: {e:#}", url);
@@ -85,7 +91,7 @@ async fn main() -> Result<()> {
     }
 
     for h in handles {
-        let _ = h.await; // we don't propagate task errors; they logged already
+        let _ = h.await; // tasks already log their own errors
     }
 
     Ok(())
@@ -97,6 +103,35 @@ fn file_name_from_url(url: &Url) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or("download")
         .to_string()
+}
+
+fn pick_output_path(out_dir: &std::path::Path, base: &str, overwrite: bool) -> std::path::PathBuf {
+    use std::path::Path;
+    let mut path = out_dir.join(base);
+    if overwrite || !path.exists() {
+        return path;
+    }
+
+    let stem = Path::new(base)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let ext = Path::new(base)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+
+    for i in 1..=9999 {
+        let candidate = if ext.is_empty() {
+            out_dir.join(format!("{stem} ({i})"))
+        } else {
+            out_dir.join(format!("{stem} ({i}).{ext}"))
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    path
 }
 
 async fn download_once(
