@@ -1,0 +1,9 @@
+# Rust build
+/target
+
+# Output downloads
+/downloads
+
+# Cargo lock for libraries 
+/Cargo.lock
+
