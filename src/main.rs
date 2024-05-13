@@ -16,14 +16,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cli.urls.is_empty() { eprintln!("No URLs provided"); std::process::exit(2); }
 
     let client = reqwest::Client::new();
-
+    
     // Download only the first URL for now
-    let url = Url::parse(&cli.urls[0])?;
+    for raw in cli.urls.iter() {
+    let url = Url::parse(raw)?;
     let fname = file_name_from_url(&url);
     let path = std::path::Path::new(&cli.out).join(fname);
-
-    download_once(&client, &url, &path).await?;
-    println!("saved -> {}", path.display());
+    println!("downloading {} -> {}", url, path.display());
+    if let Err(e) = download_once(&client, &url, &path).await {
+        eprintln!("FAILED {}: {}", url, e);
+    }
+}
     Ok(())
 }
 
