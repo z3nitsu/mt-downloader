@@ -1,6 +1,8 @@
 use clap::Parser;
 use tokio::{fs, io::AsyncWriteExt};
 use tokio::sync::Semaphore;
+use indicatif::{ProgressBar, ProgressStyle};
+use futures_util::StreamExt;
 use url::Url;
 
 #[derive(Parser, Debug)]
@@ -54,15 +56,32 @@ fn file_name_from_url(url: &Url) -> String {
 
 async fn download_once(
     client: &reqwest::Client,
-    url: &Url,
+    url: &url::Url,
     path: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.get(url.clone()).send().await?;
     if !resp.status().is_success() { return Err("non-success status".into()); }
 
+    let pb = ProgressBar::new(resp.content_length().unwrap_or(0));
+    let prefix = path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "download".to_string());
+    pb.set_prefix(prefix);
+    pb.set_style(ProgressStyle::with_template(
+        "{prefix:.cyan.bold} [{bar:40.cyan/blue}] {bytes}/{total_bytes} {bytes_per_sec}"
+    )?.progress_chars("##-"));
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
     let mut file = fs::File::create(path).await?;
-    let bytes = resp.bytes().await?;
-    file.write_all(&bytes).await?;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+        pb.inc(chunk.len() as u64);
+    }
     file.flush().await?;
+    pb.finish_with_message("done");
     Ok(())
 }
+
