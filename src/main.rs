@@ -1,41 +1,51 @@
 use clap::Parser;
+use tokio::{fs, io::AsyncWriteExt};
 use url::Url;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Beginner async multi-file downloader")]
 struct Cli {
-    /// One or more URLs to download
     urls: Vec<String>,
-
-    /// Output directory
-    #[arg(short, long, default_value = ".")]
-    out: String,
-
-    /// Max concurrent downloads
-    #[arg(short = 'c', long, default_value_t = 4)]
-    concurrency: usize,
+    #[arg(short, long, default_value = ".")] out: String,
+    #[arg(short = 'c', long, default_value_t = 4)] concurrency: usize,
 }
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+    if cli.urls.is_empty() { eprintln!("No URLs provided"); std::process::exit(2); }
 
-    if cli.urls.is_empty() {
-        eprintln!("No URLs provided");
-        std::process::exit(2);
-    }
+    let client = reqwest::Client::new();
 
-    // Validate URLs early 
-    let urls: Vec<Url> = cli
-        .urls
-        .iter()
-        .map(|s| Url::parse(s).expect("invalid URL"))
-        .collect();
+    // Download only the first URL for now
+    let url = Url::parse(&cli.urls[0])?;
+    let fname = file_name_from_url(&url);
+    let path = std::path::Path::new(&cli.out).join(fname);
 
-    println!(
-        "OK: parsed {} URL(s); out='{}'; concurrency={}",
-        urls.len(),
-        cli.out,
-        cli.concurrency
-    );
+    download_once(&client, &url, &path).await?;
+    println!("saved -> {}", path.display());
+    Ok(())
+}
+
+fn file_name_from_url(url: &Url) -> String {
+    url.path_segments()
+        .and_then(|mut segs| segs.next_back())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("download")
+        .to_string()
+}
+
+async fn download_once(
+    client: &reqwest::Client,
+    url: &Url,
+    path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resp = client.get(url.clone()).send().await?;
+    if !resp.status().is_success() { return Err("non-success status".into()); }
+
+    let mut file = fs::File::create(path).await?;
+    let bytes = resp.bytes().await?;
+    file.write_all(&bytes).await?;
+    file.flush().await?;
+    Ok(())
 }
