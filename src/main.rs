@@ -107,7 +107,7 @@ fn file_name_from_url(url: &Url) -> String {
 
 fn pick_output_path(out_dir: &std::path::Path, base: &str, overwrite: bool) -> std::path::PathBuf {
     use std::path::Path;
-    let mut path = out_dir.join(base);
+    let path = out_dir.join(base);
     if overwrite || !path.exists() {
         return path;
     }
@@ -134,11 +134,7 @@ fn pick_output_path(out_dir: &std::path::Path, base: &str, overwrite: bool) -> s
     path
 }
 
-async fn download_once(
-    client: &reqwest::Client,
-    url: &Url,
-    path: &std::path::Path,
-) -> Result<()> {
+async fn download_once(client: &reqwest::Client, url: &Url, path: &std::path::Path) -> Result<()> {
     let resp = client
         .get(url.clone())
         .send()
